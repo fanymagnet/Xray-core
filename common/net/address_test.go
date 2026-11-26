@@ -2,6 +2,7 @@ package net_test
 
 import (
 	"net"
+	"net/netip"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -183,10 +184,23 @@ func TestInvalidAddressConvertion(t *testing.T) {
 		func() { ParseAddress("8.8.8.8").Domain() },
 		func() { ParseAddress("2001:4860:0:2001::68").Domain() },
 		func() { ParseAddress("example.com").IP() },
+		func() { AsNetipAddr(ParseAddress("example.com")) },
 	}
 	for idx, testCase := range testCases {
 		if !panics(testCase) {
 			t.Error("case ", idx, " failed")
+		}
+	}
+}
+
+func TestAsNetipAddr(t *testing.T) {
+	for _, ip := range []string{"1.2.3.4", "2001:db8::1"} {
+		address := ParseAddress(ip)
+		if got, want := AsNetipAddr(address), netip.MustParseAddr(ip); got != want {
+			t.Errorf("AsNetipAddr(%v) = %v, want %v", address, got, want)
+		}
+		if n := testing.AllocsPerRun(100, func() { AsNetipAddr(address) }); n != 0 {
+			t.Errorf("AsNetipAddr(%v): %v allocs", address, n)
 		}
 	}
 }
