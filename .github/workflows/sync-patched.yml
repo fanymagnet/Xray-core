@@ -1,0 +1,63 @@
+# Keeps the patched branch on top of upstream main: rebases it daily, tests it and pushes it.
+# The push starts release.yml, which builds every platform; a new upstream tag also gets
+# a "<tag>-patched" release, to which release.yml attaches the binaries.
+# FORK_TOKEN is a fine-grained token for this repository with Contents and Workflows write:
+# GITHUB_TOKEN cannot push upstream changes to workflows, and its pushes start no workflows.
+name: Sync patched
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 3 * * *"
+
+concurrency: sync-patched
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout codebase
+        uses: actions/checkout@v7
+        with:
+          ref: patched
+          fetch-depth: 0
+          token: ${{ secrets.FORK_TOKEN }}
+
+      - name: Rebase on upstream
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream https://github.com/XTLS/Xray-core.git
+          git fetch --tags upstream main
+          git rebase upstream/main
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: Restore Geodat Cache
+        uses: actions/cache/restore@v6
+        with:
+          path: resources
+          key: xray-geodat-
+
+      - name: Test
+        run: |
+          go test -timeout 1h ./...
+          go test -race ./common/buf/... ./transport/internet/tls/...
+
+      - name: Push
+        run: |
+          git push origin refs/remotes/upstream/main:refs/heads/main
+          git push --force-with-lease origin HEAD:patched
+
+      - name: Release a new upstream tag
+        env:
+          GH_TOKEN: ${{ secrets.FORK_TOKEN }}
+        run: |
+          tag="$(git describe --tags --abbrev=0 upstream/main)-patched"
+          gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 && exit 0
+          gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target patched --title "$tag" \
+            --notes "Upstream ${tag%-patched} with the commits of the patched branch on top."
